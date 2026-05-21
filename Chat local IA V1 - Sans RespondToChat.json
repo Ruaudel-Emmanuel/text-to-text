@@ -1,0 +1,636 @@
+{
+  "name": "Chat local IA V1 - Sans RespondToChat",
+  "nodes": [
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fc1",
+              "name": "text",
+              "value": "={{ $json.chat_response }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f7db1f1b-85c3-4395-8146-3bf9b968b93a",
+      "name": "Final Clarification Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1728,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "ruaudel.emmanuel@orange.fr",
+        "toEmail": "ruaudel.emmanuel@orange.fr",
+        "subject": "={{ $json.email_subject || $json.proposed_email_subject }}",
+        "html": "={{ $('Finalize Success Response').item.json.email_body }}",
+        "options": {}
+      },
+      "id": "4730d34e-7556-4929-bc06-205ad1c15ca6",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1984,
+        288
+      ],
+      "webhookId": "f7f77464-b004-401e-a04a-3ce5fb0faa37",
+      "credentials": {
+        "smtp": {
+          "id": "i2v4aGHY9jTu82Th",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO requests_log_v1 (\n  session_id,\n  canal,\n  message_user,\n  request_type,\n  summary,\n  score_confiance,\n  needs_clarification,\n  missing_fields,\n  extracted_data,\n  action_recommandee,\n  email_to,\n  proposed_email_subject,\n  generated_email_body,\n  status\n)\nVALUES (\n  '{{ $json.session_id || \"\" }}',\n  '{{ $json.canal || \"\" }}',\n  '{{ ($json.message_user || \"\").replace(/'/g, \"''\") }}',\n  '{{ $json.request_type || \"demande_generique\" }}',\n  '{{ ($json.summary || \"\").replace(/'/g, \"''\") }}',\n  {{ $json.score_confiance || 0 }},\n  {{ $json.needs_clarification ? 'true' : 'false' }},\n  '{{ JSON.stringify($json.missing_fields || []).replace(/'/g, \"''\") }}',\n  '{{ JSON.stringify($json.extracted_data || {}).replace(/'/g, \"''\") }}',\n  '{{ $json.action_recommandee || \"preparer_email\" }}',\n  {{ $json.email_to ? \"'\" + $json.email_to.replace(/'/g, \"''\") + \"'\" : \"NULL\" }},\n  '{{ ($json.email_subject || \"Nouvelle demande client\").replace(/'/g, \"''\") }}',\n  '{{ ($json.email_body || \"\").replace(/'/g, \"''\") }}',\n  '{{ $json.status || \"pret_email\" }}'\n)\nRETURNING id, email_to, proposed_email_subject, status;",
+        "options": {}
+      },
+      "id": "c815a21e-db4c-4930-87a6-9f0820de8940",
+      "name": "Log Ready Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1744,
+        288
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BFrHa5COBN8qxat3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const emailBody = $json.text || $json.response || $json.output || \"\";\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    email_body: emailBody,\n    text: \"Demande comprise. Email préparé et envoyé à l'adresse de test \" +\n      ($input.first().json.email_to || \"test@demo.local\") +\n      \". Objet : \" +\n      (($input.first().json.email_subject) || \"Nouvelle demande client\")\n  }\n}];"
+      },
+      "id": "d87331e0-255a-4e5e-aa62-9119c5b118a7",
+      "name": "Finalize Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "model": "llama3.2:latest",
+        "options": {
+          "temperature": 0.4
+        }
+      },
+      "id": "19a48639-faea-4b70-9687-75aed37c7d57",
+      "name": "Ollama Email Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        464
+      ],
+      "credentials": {
+        "ollamaApi": {
+          "id": "97pczKEf3myZDwJs",
+          "name": "Ollama account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.email_prompt }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Tu es un assistant de rédaction métier. Tu dois rédiger un email professionnel court en français à partir des données extraites.\n\nContraintes :\n- Rédige un email clair, humain et concret.\n- Va droit au but.\n- 120 mots maximum.\n- Ne fais aucune invention si une donnée manque.\n- Si une information manque encore, formule-la comme une demande de précision polie.\n- Le ton doit être professionnel, simple et rassurant.\n- Ne mets pas d'explication sur ton fonctionnement.\n- Retourne uniquement le texte de l'email, sans balises markdown.\n\nStructure attendue :\n- Objet implicite déjà géré ailleurs, donc ne mets pas de ligne Objet:\n- Salutation courte\n- 2 à 5 phrases utiles\n- Formule de fin courte\n\nSi la demande concerne une réservation, une commande ou un ticket, reformule le besoin de manière concrète. Si la demande n'est pas totalement exploitable, demande seulement les informations manquantes indispensables."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "c7298a56-9298-49c2-b74b-0da301c75048",
+      "name": "Generate Email Body",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1216,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO requests_log_v1 (session_id, canal, message_user, request_type, summary, score_confiance, needs_clarification, missing_fields, extracted_data, action_recommandee, email_to, proposed_email_subject, status)\nVALUES (\n  '{{ $json.session_id }}',\n  '{{ $json.canal }}',\n  '{{ ($json.message_user || '').replace(/'/g, \"''\") }}',\n  '{{ $json.request_type || 'demande_generique' }}',\n  '{{ ($json.summary || '').replace(/'/g, \"''\") }}',\n  {{ $json.score_confiance || 0 }},\n  {{ $json.needs_clarification ? 'true' : 'false' }},\n  '{{ JSON.stringify($json.missing_fields || []).replace(/'/g, \"''\") }}',\n  '{{ JSON.stringify($json.extracted_data || {}).replace(/'/g, \"''\") }}',\n  '{{ $json.action_recommandee || 'clarifier' }}',\n  {{ $json.email_to ? ''' + $json.email_to.replace(/'/g, \"''\") + ''' : 'NULL' }},\n  '{{ ($json.proposed_email_subject || 'Demande à clarifier').replace(/'/g, \"''\") }}',\n  '{{ $json.status || 'a_preciser' }}'\n);",
+        "options": {}
+      },
+      "id": "b230b1cc-a8ff-4927-b596-a80298092082",
+      "name": "Log Clarification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1264,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BFrHa5COBN8qxat3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "chat_response",
+              "value": "={{ 'J’ai bien compris la demande, mais il me manque encore : ' + (($json.missing_fields || []).join(', ')) + '. Peux-tu me donner ces informations pour que je prépare l'email ?' }}",
+              "type": "string"
+            },
+            {
+              "id": "c2",
+              "name": "status",
+              "value": "a_preciser",
+              "type": "string"
+            },
+            {
+              "id": "c3",
+              "name": "text",
+              "value": "={{ 'J’ai bien compris la demande, mais il me manque encore : ' + (($json.missing_fields || []).join(', ')) + '. Peux-tu me donner ces informations pour que je prépare l'email ?' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "49f33c32-dac2-4050-8ead-66b0f908dcbf",
+      "name": "Build Clarification Answer",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1024,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if1",
+              "leftValue": "={{ $json.needs_clarification }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5860c91b-4b8d-45ac-925e-29241ef245cf",
+      "name": "Need Clarification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        768,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "session_id",
+              "value": "={{ $json.sessionId || $json.chatId || $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "message_user",
+              "value": "={{ $json.chatInput || $json.message || $json.text || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "canal",
+              "value": "chat_local",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "workflow_version",
+              "value": "v1",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "default_request_type",
+              "value": "demande_generique",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5563da71-380e-4494-b7ce-ddd55145350e",
+      "name": "Set Context1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -496,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM public.business_rules_v1;",
+        "options": {}
+      },
+      "id": "5567475a-d51d-4147-9455-e25c89a3ab66",
+      "name": "Load Business Rules1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -240,
+        192
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "bLOoXdefJZnxbhpD",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.text || $json.response || $json.output || '';\nlet parsed;\ntry {\n  parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;\n} catch (e) {\n  parsed = {\n    request_type: 'demande_generique',\n    summary: 'Réponse IA non parseable.',\n    score_confiance: 0,\n    needs_clarification: true,\n    missing_fields: ['analyse_json'],\n    action_recommandee: 'clarifier',\n    email_to: null,\n    proposed_email_subject: 'Demande à clarifier',\n    extracted_data: {},\n    raw_llm_output: raw\n  };\n}\nreturn [{ json: { ...$input.first().json, ...parsed } }];"
+      },
+      "id": "744784b5-a997-450a-8bcf-66eaa323ffc3",
+      "name": "Parse Extraction JSON1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "model": "llama3.2:latest",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "1f71cf4d-0e22-4109-bdf8-92ca20cb96d2",
+      "name": "Ollama Extract Model1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        272,
+        416
+      ],
+      "credentials": {
+        "ollamaApi": {
+          "id": "97pczKEf3myZDwJs",
+          "name": "Ollama account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.extract_prompt }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Tu es un moteur d'extraction métier. Tu analyses un message utilisateur en français et tu renvoies UNIQUEMENT un JSON valide, sans markdown, sans commentaire, sans texte avant ou après.\n\nObjectif : classer la demande, extraire les informations utiles, évaluer la confiance, et dire si une clarification est nécessaire.\n\nContraintes de sortie :\n- Réponds uniquement avec un objet JSON.\n- N'invente aucune information absente du message.\n- Si une information manque, mets la valeur null.\n- Le champ score_confiance doit être un nombre entre 0 et 1.\n- Le champ needs_clarification doit être true si une donnée essentielle manque.\n- Le champ missing_fields doit être un tableau.\n- Le champ extracted_data doit être un objet JSON.\n- Le champ proposed_email_subject doit être court et orienté métier.\n- Le champ summary doit tenir en 2 phrases maximum.\n\nSchéma JSON attendu :\n{\n  \"request_type\": \"reservation|commande|ticket_support|candidature|demande_generique\",\n  \"summary\": \"...\",\n  \"score_confiance\": 0.0,\n  \"needs_clarification\": true,\n  \"missing_fields\": [\"...\"],\n  \"action_recommandee\": \"clarifier|preparer_email|creer_fiche\",\n  \"email_to\": \"...\",\n  \"proposed_email_subject\": \"...\",\n  \"extracted_data\": {\n    \"nom\": null,\n    \"email\": null,\n    \"telephone\": null,\n    \"societe\": null,\n    \"date\": null,\n    \"quantite\": null,\n    \"produit_service\": null,\n    \"message_source\": null,\n    \"details_libres\": null\n  }\n}\n\nUtilise les règles métier fournies pour choisir le type de demande, les champs requis, le destinataire email et le seuil de confiance. Si aucune règle ne correspond clairement, utilise demande_generique."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "8d4084eb-63bd-4804-b765-e951f0c6032b",
+      "name": "Extract Request1",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        272,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -752,
+        192
+      ],
+      "id": "8857bc8f-89ca-4d2f-ad54-06cd929b4f81",
+      "name": "When chat message received",
+      "webhookId": "8b7671c0-45ab-4dd4-a760-656e77ab31bb"
+    },
+    {
+      "parameters": {
+        "sessionKey": "={{ $json.session_id }}",
+        "tableName": "chat_memory_v1",
+        "contextWindowLength": 6
+      },
+      "id": "2e37c573-eec3-4134-9d80-a26bc44d65f7",
+      "name": "Postgres Chat Memory1",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        32,
+        -96
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "bLOoXdefJZnxbhpD",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS business_rules_v1 (\n  id SERIAL PRIMARY KEY,\n  request_type VARCHAR(100) NOT NULL,\n  description TEXT,\n  required_fields JSONB,\n  email_to VARCHAR(255),\n  email_subject_template TEXT,\n  response_style VARCHAR(100),\n  confidence_threshold NUMERIC(4,3) DEFAULT 0.75,\n  extra_instructions TEXT,\n  priority INT DEFAULT 100,\n  is_active BOOLEAN DEFAULT true,\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\nCREATE TABLE IF NOT EXISTS requests_log_v1 (\n  id SERIAL PRIMARY KEY,\n  session_id VARCHAR(255),\n  canal VARCHAR(50),\n  message_user TEXT,\n  request_type VARCHAR(100),\n  summary TEXT,\n  score_confiance NUMERIC(4,3),\n  needs_clarification BOOLEAN,\n  missing_fields JSONB,\n  extracted_data JSONB,\n  action_recommandee VARCHAR(100),\n  email_to VARCHAR(255),\n  proposed_email_subject TEXT,\n  generated_email_body TEXT,\n  status VARCHAR(50),\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\nINSERT INTO business_rules_v1 (\n  request_type, description, required_fields, email_to, email_subject_template, response_style, confidence_threshold, extra_instructions, priority, is_active\n) VALUES\n('reservation', 'Demande de réservation', '[\"nom\",\"date\"]', 'resa@demo.local', 'Nouvelle demande de réservation', 'professionnel', 0.75, 'Vérifier date et nombre de personnes si disponible.', 1, true),\n('commande', 'Demande de commande ou réapprovisionnement', '[\"nom\",\"produit_service\",\"quantite\"]', 'commandes@demo.local', 'Nouvelle demande de commande', 'professionnel', 0.80, 'Vérifier produit, quantité et délai souhaité.', 2, true),\n('ticket_support', 'Problème client ou demande SAV', '[\"nom\",\"details_libres\"]', 'support@demo.local', 'Nouveau ticket support', 'professionnel', 0.70, 'Identifier si urgence et impact client.', 3, true),\n('candidature', 'Réception d''une candidature ou CV', '[\"nom\"]', 'rh@demo.local', 'Nouvelle candidature reçue', 'professionnel', 0.70, 'Identifier poste recherché et coordonnées si présentes.', 4, true),\n('demande_generique', 'Demande générale', '[\"details_libres\"]', 'contact@demo.local', 'Nouvelle demande client', 'professionnel', 0.65, 'Demander la précision minimale nécessaire avant action.', 99, true);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        288,
+        -96
+      ],
+      "id": "a7d1f176-d31b-4a32-8f72-c4d6cd5d026a",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "bLOoXdefJZnxbhpD",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bf21c47c-8a50-442f-9a00-d7d241ea9afd",
+              "name": "extract_prompt",
+              "value": "=MESSAGE UTILISATEUR: {{ $('Set Context1').item.json.message_user }}  REGLES METIER (JSON): {{ JSON.stringify($items('Load Business Rules1').map(item => item.json)) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        192
+      ],
+      "id": "68aaac5c-94fc-471c-be55-191e97a666b5",
+      "name": "Build Extract Prompt"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "email_prompt",
+              "value": "// Build Email Prompt \"DONNEES EXTRAITES (JSON):\\n\" + JSON.stringify($json, null, 2)",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "include": "selected",
+        "options": {}
+      },
+      "id": "4143ace2-9700-4468-a010-60921e45e60d",
+      "name": "Build Email Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1024,
+        288
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Log Ready Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Success Response": {
+      "main": [
+        [
+          {
+            "node": "Log Ready Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Email Body": {
+      "main": [
+        [
+          {
+            "node": "Finalize Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Email Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generate Email Body",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Clarification": {
+      "main": [
+        [
+          {
+            "node": "Final Clarification Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Clarification Answer": {
+      "main": [
+        [
+          {
+            "node": "Log Clarification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need Clarification?": {
+      "main": [
+        [
+          {
+            "node": "Build Clarification Answer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Email Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Context1": {
+      "main": [
+        [
+          {
+            "node": "Load Business Rules1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Extract Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Request1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Request1": {
+      "main": [
+        [
+          {
+            "node": "Parse Extraction JSON1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Business Rules1": {
+      "main": [
+        [
+          {
+            "node": "Build Extract Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Set Context1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Extraction JSON1": {
+      "main": [
+        [
+          {
+            "node": "Need Clarification?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Extract Prompt": {
+      "main": [
+        [
+          {
+            "node": "Extract Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Email Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "e4963de5-8f86-48e9-9e51-ec94ca15ffab",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "558d88703fb65b2d0e44613bc35916258b0f0bf983c5d4730c00c424b77ca36a"
+  },
+  "id": "RCjtzcTieqQMJmEV",
+  "tags": []
+}
